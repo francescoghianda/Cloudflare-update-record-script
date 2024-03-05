@@ -6,7 +6,9 @@ const server = Bun.serve({
     port: process.env.PORT || 3000,
     fetch(request) {
 
-        const path = new URL(request.url).pathname;
+        const url = new URL(request.url)
+        const path = url.pathname
+        const params = url.searchParams
         const serviceData = updateService.serviceData()
 
         if (path === '/status') {
@@ -41,11 +43,9 @@ const server = Bun.serve({
             return new Response('Service stopped.')
         }
 
-        if (path === '/update-now') {
-            if (!serviceData.running) {
-                return new Response("Service not running.")
-            }
-            updateService.updateNow()
+        if (path === '/update') {
+            const force = params.has('force')
+            updateService.updateNow(force)
             return new Response('Update requested.')
         }
 

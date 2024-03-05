@@ -24,6 +24,8 @@ let lastResponse: UpdateDnsRecordResponse | undefined
 let lastSuccessfulUpdate: Date | undefined
 let lastUpdateSkipped: boolean = false
 
+let forceUpdate: boolean = false
+
 let timer: Timer
 let pendingPromiseResolve: () => void
 
@@ -50,7 +52,7 @@ const startService = async () => {
 
             const currentIp = await lookup()
 
-            if (currentIp === lastIp && apiErrors === 0) {
+            if (!forceUpdate && currentIp === lastIp && apiErrors === 0) {
                 // Skip update
                 lastUpdateSkipped = true
                 log("Update skipped (IP not changed from last update)")
@@ -59,6 +61,7 @@ const startService = async () => {
                 continue
             }
 
+            forceUpdate = false
             lastUpdateSkipped = false
             lastIp = currentIp
             
@@ -137,10 +140,11 @@ const startService = async () => {
 
 const stopService = () => {
     running = false
-    updateNow() // Called to terminate the loop
+    updateNow(false) // Called to terminate the loop
 }
 
-const updateNow = async () => {
+const updateNow = async (force: boolean) => {
+    forceUpdate = force
     clearTimeout(timer)
     if (pendingPromiseResolve) {
         pendingPromiseResolve()
