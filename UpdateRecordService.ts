@@ -145,6 +145,7 @@ const stopService = () => {
 
 const updateNow = async (force: boolean) => {
     forceUpdate = force
+    log(`Manual update requested (force=${force})`)
     clearTimeout(timer)
     if (pendingPromiseResolve) {
         pendingPromiseResolve()
