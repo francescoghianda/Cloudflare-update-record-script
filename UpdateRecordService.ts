@@ -89,7 +89,7 @@ const startService = async () => {
                 log("Record update failed. Check the last respose for more details about the error.", "error")
 
                 if (apiErrors > 2) {
-                    log("Too meny errors.")
+                    log("Too many errors.")
                     unexpectedStop = true
                     break
                 }
@@ -137,6 +137,10 @@ const startService = async () => {
 
 const stopService = () => {
     running = false
+    updateNow() // Called to terminate the loop
+}
+
+const updateNow = async () => {
     clearTimeout(timer)
     if (pendingPromiseResolve) {
         pendingPromiseResolve()
@@ -157,6 +161,7 @@ const serviceData = () => {
 export default {
     startService,
     stopService,
+    updateNow,
     serviceData
 }
 

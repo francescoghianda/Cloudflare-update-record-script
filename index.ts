@@ -3,7 +3,7 @@ import updateService from './UpdateRecordService';
 import { sendEmailAlert } from './utils';
 
 const server = Bun.serve({
-    port: 3000,
+    port: process.env.PORT || 3000,
     fetch(request) {
 
         const path = new URL(request.url).pathname;
@@ -29,12 +29,7 @@ const server = Bun.serve({
             if (serviceData.running) {
                 return new Response('Service already running.')
             }
-            updateService.startService().then((unexpectedStop) => {
-                if (unexpectedStop) {
-                    const serviceData = updateService.serviceData() 
-                    sendEmailAlert('DynamicDNS update error', `The script has been interrupted.\nLast ip = ${serviceData.lastIp}\nLast resposnse:\n${JSON.stringify(serviceData.lastResponse)}`)
-                }
-            })
+            startService()
             return new Response('Service started.')
         }
 
@@ -43,9 +38,28 @@ const server = Bun.serve({
                 return new Response('Service alredy stopped.')
             }
             updateService.stopService()
-            return new Response('Service stopped')
+            return new Response('Service stopped.')
+        }
+
+        if (path === '/update-now') {
+            if (!serviceData.running) {
+                return new Response("Service not running.")
+            }
+            updateService.updateNow()
+            return new Response('Update requested.')
         }
 
         return new Response(null, {status: 404});
     },
 });
+
+const startService = () => {
+    updateService.startService().then((unexpectedStop) => {
+        if (unexpectedStop) {
+            const serviceData = updateService.serviceData() 
+            sendEmailAlert('DynamicDNS update error', `The script has been interrupted.\nLast ip = ${serviceData.lastIp}\nLast resposnse:\n${JSON.stringify(serviceData.lastResponse)}`)
+        }
+    })
+}
+
+startService() // Automatically start the service on startup
