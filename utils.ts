@@ -19,7 +19,7 @@ export const log = (message: string, level: LogLevel = "info") => {
     logHistory.push(l)
 
     if (logHistory.length > 30) {
-        logHistory = logHistory.splice(0, 1)
+        logHistory.splice(0, 1)
     }
 
     console[level](m)

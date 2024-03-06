@@ -1,4 +1,4 @@
-import { lookup, log, logHistory } from "./utils"
+import { lookup, log, logHistory, NetworkError } from "./utils"
 import cloudflare from './cloudflare'
 import { UpdateDnsRecordResponse } from "./cloudflare"
 
@@ -35,6 +35,7 @@ const sleep = (millis) => {
         timer = setTimeout(resolve, millis)
     }).then(() => {pendingPromiseResolve = undefined})
 }
+
 
 const startService = async () => {
 

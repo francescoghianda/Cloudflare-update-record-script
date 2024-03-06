@@ -1,5 +1,5 @@
 import Bun from 'bun'
-import updateService from './UpdateRecordService';
+import updateService from './RecordUpdater';
 import { sendEmailAlert } from './utils';
 
 const server = Bun.serve({
@@ -13,7 +13,7 @@ const server = Bun.serve({
 
         if (path === '/status') {
 
-            const body = {
+            /*const body = {
                 status: (!serviceData.lastResponse || serviceData.lastResponse.success) ? 'ok' : 'error',
                 data: {
                     running: serviceData.running,
@@ -23,29 +23,30 @@ const server = Bun.serve({
                     lastUpdateSkipped: serviceData.lastUpdateSkipped,
                     logs: serviceData.logHistory,
                 }
-            }
-            return Response.json(body)
+            }*/
+            
+            return Response.json(serviceData)
         }
 
         if (path === '/start-service') {
-            if (serviceData.running) {
+            if (serviceData.status === "running") {
                 return new Response('Service already running.')
             }
-            startService()
+            updateService.start()
             return new Response('Service started.')
         }
 
         if (path === '/stop-service') {
-            if (!serviceData.running) {
+            if (serviceData.status !== "running") {
                 return new Response('Service alredy stopped.')
             }
-            updateService.stopService()
+            updateService.stop()
             return new Response('Service stopped.')
         }
 
         if (path === '/update') {
             const force = params.has('force')
-            updateService.updateNow(force)
+            updateService.updateSync()
             return new Response('Update requested.')
         }
 
@@ -53,13 +54,19 @@ const server = Bun.serve({
     },
 });
 
-const startService = () => {
+/*const startService = () => {
     updateService.startService().then((unexpectedStop) => {
         if (unexpectedStop) {
             const serviceData = updateService.serviceData() 
             sendEmailAlert('DynamicDNS update error', `The script has been interrupted.\nLast ip = ${serviceData.lastIp}\nLast resposnse:\n${JSON.stringify(serviceData.lastResponse)}`)
         }
     })
+}*/
+updateService.onStop = (unexpectedStop) => {
+    if (unexpectedStop) {
+        const serviceData = updateService.serviceData() 
+        sendEmailAlert('DynamicDNS update error', `The script has been interrupted.\nLast ip = ${serviceData.lastResult.ip}\nLast resposnse:\n${JSON.stringify(serviceData.lastResult.apiResponse)}`)
+    }
 }
 
-startService() // Automatically start the service on startup
+updateService.start() // Automatically start the service on startup
