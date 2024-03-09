@@ -1,6 +1,7 @@
 import { lookup, log, logHistory, NetworkError } from "./utils"
 import cloudflare from './cloudflare'
 import { UpdateDnsRecordResponse } from "./cloudflare"
+import { DelayedTask, DelayedTaskResult } from "./DeleyedTask"
 
 interface UpdateResult {
     status: "success" | "skipped" | "error";
@@ -8,6 +9,17 @@ interface UpdateResult {
     ip?: string;
     apiResponse?: UpdateDnsRecordResponse;
 }
+
+/*interface ScheduleResult {
+    status: "executed" | "canceled"
+    result?: UpdateResult
+}
+
+interface Schedule {
+    timer: Timer
+    resolveFunction: (ScheduleResult) => void
+    time: number
+}*/
 
 const API_TOKEN = process.env.API_TOKEN
 const ZONE_ID = process.env.ZONE_ID
@@ -26,11 +38,14 @@ let status: "ready" |  "running" | "stopped" = "ready"
 let lastResult: UpdateResult
 let lastUpdateSkipped: boolean
 let lastSuccessfulUpdateDate: Date
-let timeOnNextUpdate: number
 
 let apiErrors: number = 0
 let networkErrors: number = 0
-let timer: Timer
+
+//let pendingSchedule: Schedule
+
+let syncUpdateTask: DelayedTask<UpdateResult>
+
 let onstop: (unexpectedStop) => void
 
 const update = async (forceUpdate: boolean = false): Promise<UpdateResult>  => {
@@ -91,21 +106,122 @@ const update = async (forceUpdate: boolean = false): Promise<UpdateResult>  => {
     }
 }
 
-const schedule = (millis: number, forceUpdate: boolean = false) => {
-    if (timer) return
-    log(`Next record update in ${millis/60_000} min`)
-    timeOnNextUpdate = Date.now() + millis
-    timer = setTimeout(async () => {
+const syncUpdate = (millis: number, forceUpdate: boolean = false): Promise<DelayedTaskResult<UpdateResult>> => {
+    if (syncUpdateTask && syncUpdateTask.getStatus() === 'pending'){
+        return Promise.resolve({
+            status: "canceled",
+        })
+    }
 
-        const nextUpdateTime = await updateAndGetNextScheduleTime(forceUpdate)
+    syncUpdateTask = DelayedTask(millis, () => {
+        return update(forceUpdate)
+    })
 
-        timer = null
-        schedule(nextUpdateTime)
+    return syncUpdateTask.getResult().then(taskResult => {
 
-    }, millis)
+        if (taskResult.status === "executed") {
+            const updateResult = taskResult.result
+
+            const nextUpdateTime = getNextUpdateTime(updateResult)
+
+            // Update the exported data
+            setServiceData(updateResult)
+
+            if (nextUpdateTime < 0) {
+                // Stop service
+                log("Repeated API errors.")
+                log("Service stopped.")
+                if (onstop) onstop(true)
+                return
+            }
+
+            if (updateResult.status === 'error') {
+                if (nextUpdateTime === 0) log("Retry")
+                else log(`Retry in ${nextUpdateTime/60_000} min`)
+            }
+
+            if (networkErrors > 1) log("Possible network problem.")
+
+
+            syncUpdate(nextUpdateTime)
+
+        }
+
+        return taskResult
+    })
 }
 
-const updateAndGetNextScheduleTime = async (forceUpdate: boolean) => {
+const setServiceData = (updateResult: UpdateResult) => {
+    lastResult = updateResult
+    lastUpdateSkipped = updateResult.status === "skipped"
+    if (updateResult.status === "success") lastSuccessfulUpdateDate = new Date()
+}
+
+const getNextUpdateTime = (result: UpdateResult): number => {
+
+    if (result.status === "success" || result.status === "skipped") {
+        apiErrors = 0
+        networkErrors = 0
+
+        return 10 * 60 * 1000 // 10 min
+    }
+
+    // In case of error:
+
+    if (result.error === "api") {
+        apiErrors++
+        if (apiErrors > 2) return -1 // In case of repeated API error, stop the service
+        return 2 * 60 * 1000
+    }
+    else {
+        networkErrors++
+        return networkErrors > 1 ? 30 * 60 * 1000 : 0 // At first network error retry immediatly. In case of repeated network error, retry after 30 min
+    }
+
+}
+
+/*const schedule = (millis: number, forceUpdate: boolean = false): Promise<ScheduleResult> => {
+    if (pendingSchedule) return
+    log(`Next record update in ${millis/60_000} min`)
+    
+    return new Promise((resolve) => {
+        
+        const timer = setTimeout(async () => {
+
+            pendingSchedule = null
+
+            const res = await updateAndGetNextScheduleTime(forceUpdate)
+
+            resolve({
+                status: "executed",
+                result: res.result
+            })
+
+            if (res.nextUpdateTime < 0) {
+                log("Repeated API errors.")
+                log("Service stopped.")
+                if (onstop) onstop(true)
+                return
+            }
+
+            if (res.result.status === "error") {
+                if (res.nextUpdateTime === 0) log("Retry")
+                else log(`Retry in ${res.nextUpdateTime/60_000} min`)
+            }
+    
+            schedule(res.nextUpdateTime)
+    
+        }, millis)
+
+        pendingSchedule = {
+            timer: timer,
+            resolveFunction: resolve,
+            time: Date.now() + millis
+        }
+    })
+}*/
+
+/*const updateAndGetNextScheduleTime = async (forceUpdate: boolean) => {
 
     let nextUpdateTime = 10 * 60 * 1000
 
@@ -125,11 +241,10 @@ const updateAndGetNextScheduleTime = async (forceUpdate: boolean) => {
             nextUpdateTime = 2 * 60 * 1000
             if (apiErrors > 2) {
                 // Stop service
-                log("Repeated API errors.")
-                log("Service stopped.")
-                timeOnNextUpdate = -1
-                if (onstop) onstop(true)
-                return
+                return {
+                    result,
+                    nextUpdateTime: -1
+                }
             }
         }
         else {
@@ -138,41 +253,60 @@ const updateAndGetNextScheduleTime = async (forceUpdate: boolean) => {
             if (networkErrors > 1) log("Possible network problem.")
         }
 
-        if (nextUpdateTime === 0) log("Retry")
-        else log(`Retry in ${nextUpdateTime/60_000} min`)
     }
 
-    return nextUpdateTime
-}
+    return {
+        result,
+        nextUpdateTime
+    }
+}*/
 
-const deleteTimer = () => {
-    clearTimeout(timer)
-    timeOnNextUpdate = -1
-    timer = null
+const cancelNextUpdate = () => {
+    /*if (pendingSchedule) {
+        clearTimeout(pendingSchedule.timer)
+        pendingSchedule.resolveFunction({status: "canceled"})
+        pendingSchedule = null
+    }*/
+    if (syncUpdateTask) {
+        syncUpdateTask.cancel()
+        syncUpdateTask = null
+    }  
 }
 
 const start = () => {
+    if (status === 'running') return
     log("Service started.")
     status = "running"
-    schedule(0)
+    //schedule(0)
+    syncUpdate(0)
 }
 
 const stop = () => {
-    deleteTimer()
+    if (status !== 'running') return
+    cancelNextUpdate()
     status = "stopped"
     log("Service stopped.")
     if(onstop) onstop(false)
 }
 
-const updateSync = () => {
+const updateSync = (forceUpdate: boolean): Promise<DelayedTaskResult<UpdateResult>> => {
+    if (status !== 'running') return
     log("Manual update (sync).")
-    deleteTimer()
-    schedule(0, true)
+    cancelNextUpdate()
+    return syncUpdate(0, forceUpdate)
 }
 
-const updateAsync = () => {
+const updateAsync = (forceUpdate: boolean): Promise<UpdateResult> => {
     log("Manual update (async).")
-    updateAndGetNextScheduleTime(true)
+    /*return new Promise(async resolve => {
+        const res = await updateAndGetNextScheduleTime(forceUpdate)
+        resolve(res.result)
+    })*/
+    return new Promise(async resolve => {
+        const updateResult = await update(forceUpdate)
+        setServiceData(updateResult)
+        resolve(updateResult)
+    })
 }
 
 const serviceData = () => {
@@ -182,7 +316,7 @@ const serviceData = () => {
         logHistory,
         lastSuccessfulUpdateDate,
         lastUpdateSkipped,
-        nextUpdateIn: timeOnNextUpdate > 0 ? `${Math.round((timeOnNextUpdate - Date.now())/60_000)} min` : '-'
+        nextUpdateIn: syncUpdateTask ? `${Math.round(syncUpdateTask.getTimeLeft()/60_000)} min` : '-'
     }
 }
 

@@ -4,7 +4,7 @@ import { sendEmailAlert } from './utils';
 
 const server = Bun.serve({
     port: process.env.PORT || 3000,
-    fetch(request) {
+    async fetch(request) {
 
         const url = new URL(request.url)
         const path = url.pathname
@@ -46,8 +46,18 @@ const server = Bun.serve({
 
         if (path === '/update') {
             const force = params.has('force')
-            updateService.updateSync()
+            const async = params.has('async')
+            if (async) updateService.updateAsync(force)
+            else updateService.updateSync(force)
             return new Response('Update requested.')
+        }
+
+        if (path === '/logs') {
+            const logsFile = Bun.file('./logs.log')
+            if (await logsFile.exists()) {
+                return new Response(logsFile)
+            }
+            return new Response('No logs present.')
         }
 
         return new Response(null, {status: 404});
