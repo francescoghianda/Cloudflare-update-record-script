@@ -1,7 +1,7 @@
 import { lookup, log, logHistory, NetworkError } from "./utils"
 import cloudflare from './cloudflare'
 import { UpdateDnsRecordResponse } from "./cloudflare"
-import { DelayedTask, DelayedTaskResult } from "./DeleyedTask"
+import { DelayedTask, DelayedTaskResult } from "./DelayedTask"
 
 interface UpdateResult {
     status: "success" | "skipped" | "error";
